@@ -4,6 +4,7 @@ import time
 from polygon import RESTClient  
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+from email_notifier import OptionsEmailNotifier
 
 class OptionsTracker:
     def __init__(self):
@@ -17,6 +18,9 @@ class OptionsTracker:
         self.client = RESTClient(os.getenv("POLYGON_API_KEY"))
         self.option_symbols = []
         self.indicators = []
+
+        # Initialize email notifier
+        self.email_notifier = OptionsEmailNotifier()
 
         # For each time frame and each option symbol, trade status starts off False, entry price starts off 0, exit price starts off 0
         self.time_frames = ["1min", "5min", "10min"]
@@ -156,10 +160,29 @@ class OptionsTracker:
                 df["roc_8"].iloc[-1] > 0 and 
                 df["macd_line"].iloc[-1] > df["macd_signal"].iloc[-1] and 
                 not self.entries[option_symbol][time_frame]["open"]):
+                
                 # Record the entry
                 self.entries[option_symbol][time_frame]["open"] = True
                 # Record the entry price
-                self.entries[option_symbol][time_frame]["entry_price"] = df["close"].iloc[-1]
+                entry_price = df["close"].iloc[-1]
+                self.entries[option_symbol][time_frame]["entry_price"] = entry_price
+                
+                # Send email notification for entry
+                signal_details = {
+                    'ema_vwma': df["ema_7"].iloc[-1] > df["vwma_17"].iloc[-1],
+                    'roc_positive': df["roc_8"].iloc[-1] > 0,
+                    'macd_bullish': df["macd_line"].iloc[-1] > df["macd_signal"].iloc[-1]
+                }
+                
+                self.email_notifier.send_trade_notification(
+                    option_symbol=option_symbol,
+                    timeframe=time_frame,
+                    action='ENTRY',
+                    price=entry_price,
+                    signal_details=signal_details
+                )
+                
+                print(f"✅ ENTRY: {option_symbol} ({time_frame}) at ${entry_price:.4f}")
             
             
     def check_for_exit(self, option_symbol):
@@ -179,20 +202,50 @@ class OptionsTracker:
             if exit_conditions_met >= 2 and self.entries[option_symbol][time_frame]["open"]:
                 # Record the exit
                 self.entries[option_symbol][time_frame]["open"] = False
+                
                 # Calculate profit/loss
-                profit_loss = df["close"].iloc[-1] - self.entries[option_symbol][time_frame]["entry_price"]
+                entry_price = self.entries[option_symbol][time_frame]["entry_price"]
+                exit_price = df["close"].iloc[-1]
+                profit_loss = exit_price - entry_price
+                
                 # Record the trade entry, exit, and profit/loss
                 self.trades.append({
                     "option_symbol": option_symbol,
                     "time_frame": time_frame,
-                    "entry_price": self.entries[option_symbol][time_frame]["entry_price"],
-                    "exit_price": df["close"].iloc[-1],
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
                     "profit_loss": profit_loss
                 })
 
                 # Store the entry and exit in a csv file with profit/loss
                 with open(f"{option_symbol}_{time_frame}_entry_exit.csv", "a") as f:
-                    f.write(f"{option_symbol},{time_frame},{df['close'].iloc[-1]},{df['close'].iloc[-1]},{profit_loss}\n")
+                    f.write(f"{option_symbol},{time_frame},{entry_price},{exit_price},{profit_loss}\n")
+
+                # Send email notification for exit
+                signal_details = {
+                    'conditions_met': exit_conditions_met,
+                    'ema_vwma_bearish': condition1,
+                    'roc_negative': condition2,
+                    'macd_bearish': condition3
+                }
+                
+                pnl_info = {
+                    'entry_price': entry_price,
+                    'exit_price': exit_price,
+                    'profit_loss': profit_loss
+                }
+                
+                self.email_notifier.send_trade_notification(
+                    option_symbol=option_symbol,
+                    timeframe=time_frame,
+                    action='EXIT',
+                    price=exit_price,
+                    signal_details=signal_details,
+                    pnl_info=pnl_info
+                )
+                
+                pnl_status = "PROFIT" if profit_loss >= 0 else "LOSS"
+                print(f"🔚 EXIT: {option_symbol} ({time_frame}) at ${exit_price:.4f} - {pnl_status}: ${profit_loss:.4f}")
 
         
     def run(self):

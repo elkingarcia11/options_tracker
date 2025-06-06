@@ -46,7 +46,37 @@ POLYGON_API_KEY=your_polygon_api_key_here
 
 Get your free API key from [Polygon.io](https://polygon.io/)
 
-### 3. Update Requirements
+### 3. Email Notifications (Optional)
+
+To receive email alerts when trades are opened/closed:
+
+1. Copy the template:
+
+   ```bash
+   cp email_credentials.env.template email_credentials.env
+   ```
+
+2. Edit `email_credentials.env` with your email settings:
+
+   ```
+   EMAIL_ALERTS_ENABLED=true
+   SENDER_EMAIL=your_email@gmail.com
+   SENDER_PASSWORD=your_app_password
+   TO_EMAILS=recipient@gmail.com
+   ```
+
+3. For Gmail, generate an app-specific password:
+
+   - Go to [Google App Passwords](https://myaccount.google.com/apppasswords)
+   - Generate a password for "Mail"
+   - Use this password (not your regular Gmail password)
+
+4. Test your email configuration:
+   ```bash
+   python -c "from email_notifier import OptionsEmailNotifier; n=OptionsEmailNotifier(); n.send_test_email()"
+   ```
+
+### 4. Update Requirements
 
 Make sure your `requirements.txt` contains:
 
@@ -92,7 +122,14 @@ crontab -e
 
 ## Output Files
 
-The tracker generates several CSV files:
+The tracker generates several CSV files and can send email notifications:
+
+### Email Notifications 📧
+
+- **Trade Entry Alerts**: Real-time notifications when positions open
+- **Trade Exit Alerts**: Notifications when positions close with P&L analysis
+- **Parsed Option Details**: Human-readable option information (symbol, strike, expiry)
+- **Technical Signal Summary**: Which conditions triggered entry/exit
 
 ### Price Data Files
 
