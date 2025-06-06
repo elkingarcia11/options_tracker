@@ -10,6 +10,10 @@ class OptionsTracker:
         """
         Initialize the OptionsTracker class
         """
+        # Load environment variables
+        load_dotenv()
+
+        # Initialize the client
         self.client = RESTClient(os.getenv("POLYGON_API_KEY"))
         self.option_symbols = []
         self.indicators = []
@@ -18,6 +22,19 @@ class OptionsTracker:
         self.time_frames = ["1min", "5min", "10min"]
         self.entries = {}
         self.trades = []
+    
+    def initialize_entries(self, option_symbols):
+        """
+        Initialize the entries structure for all option symbols and timeframes
+        """
+        for option_symbol in option_symbols:
+            self.entries[option_symbol] = {}
+            for time_frame in self.time_frames:
+                self.entries[option_symbol][time_frame] = {
+                    "open": False,
+                    "entry_price": 0,
+                    "exit_price": 0
+                }
     
     def get_open_price(self, symbol):
         """
@@ -40,18 +57,14 @@ class OptionsTracker:
         # Add 2 business days to today's date
         expiry_date = today + timedelta(days=2)
 
-        # Parse the expiry date
-        expiry = datetime.strptime(expiry_date, '%Y-%m-%d')
-        
-        # if expiry is a saturday, add 2 days
-        if expiry.weekday() == 5:
-            expiry += timedelta(days=2)
-        # if expiry is a sunday, add 1 day
-        elif expiry.weekday() == 6:
-            expiry += timedelta(days=1)
+        # Check if expiry is a weekend and adjust
+        if expiry_date.weekday() == 5:  # Saturday
+            expiry_date += timedelta(days=2)
+        elif expiry_date.weekday() == 6:  # Sunday
+            expiry_date += timedelta(days=1)
 
         # Format date as YYMMDD
-        date_str = expiry.strftime('%y%m%d')
+        date_str = expiry_date.strftime('%y%m%d')
         
         # Format strike price as 8-digit string with 3 decimal places
         # (multiply by 1000 to handle cents, then pad to 8 digits)
@@ -83,14 +96,18 @@ class OptionsTracker:
             limit=120,
         ):
             aggs.append(a)
+            
         # Save to csv
         with open(f"{option_symbol}_1min.csv", "a") as f:
-            f.write(f"{aggs[-1]["t"]},{aggs[-1]["o"]},{aggs[-1]["h"]},{aggs[-1]["l"]},{aggs[-1]["c"]},{aggs[-1]["v"]}\n")
+            f.write(f"{aggs[-1]['t']},{aggs[-1]['o']},{aggs[-1]['h']},{aggs[-1]['l']},{aggs[-1]['c']},{aggs[-1]['v']}\n")
     
     def aggregate_minute_data(self, option_symbol):
         # Read csv
         df = pd.read_csv(f"{option_symbol}_1min.csv")
-        # Aggregate to 5 minutes and 10 minutes and save to csv
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df.set_index('timestamp', inplace=True)
+        
+        # Aggregate to 5 minutes
         df_5min = df.resample('5min').agg({
             'open': 'first',
             'high': 'max',
@@ -98,6 +115,7 @@ class OptionsTracker:
             'close': 'last',
             'volume': 'sum'
         })
+        # Aggregate 10 minutes
         df_10min = df.resample('10min').agg({
             'open': 'first',
             'high': 'max',
@@ -105,28 +123,28 @@ class OptionsTracker:
             'close': 'last',
             'volume': 'sum'
         })
+        
         # Save to csv
-        df_5min.to_csv(f"{option_symbol}_5min.csv", index=False)
-        df_10min.to_csv(f"{option_symbol}_10min.csv", index=False)
+        df_5min.to_csv(f"{option_symbol}_5min.csv")
+        df_10min.to_csv(f"{option_symbol}_10min.csv")
 
     def calculate_indicators(self, option_symbol, time_frame):
         """
         Calculate ema_7, vwma_17, ema_12, ema_26, macd_line, macd_signal, roc_8 for new entries
         """
-        for time_frame in self.time_frames:
-            # Read csv
-            df = pd.read_csv(f"{option_symbol}_{time_frame}.csv")
-        
-            # Calculate ema_7, vwma_17,ema_7,vwma_17,ema_12,ema_26,macd_line,macd_signal,roc_8 for new entries
-            df["ema_7"] = df["close"].ewm(span=7, adjust=False).mean()
-            df["vwma_17"] = df["close"].ewm(span=17, adjust=False).mean()
-            df["ema_12"] = df["close"].ewm(span=12, adjust=False).mean()
-            df["ema_26"] = df["close"].ewm(span=26, adjust=False).mean()
-            df["macd_line"] = df["ema_12"] - df["ema_26"]
-            df["macd_signal"] = df["macd_line"].ewm(span=9, adjust=False).mean()
-            df["roc_8"] = df["close"].pct_change(8)
-            # Save to csv
-            df.to_csv(f"{option_symbol}_{time_frame}.csv", index=False)
+        # Read csv
+        df = pd.read_csv(f"{option_symbol}_{time_frame}.csv")
+    
+        # Calculate ema_7, vwma_17,ema_7,vwma_17,ema_12,ema_26,macd_line,macd_signal,roc_8 for new entries
+        df["ema_7"] = df["close"].ewm(span=7, adjust=False).mean()
+        df["vwma_17"] = df["close"].ewm(span=17, adjust=False).mean()
+        df["ema_12"] = df["close"].ewm(span=12, adjust=False).mean()
+        df["ema_26"] = df["close"].ewm(span=26, adjust=False).mean()
+        df["macd_line"] = df["ema_12"] - df["ema_26"]
+        df["macd_signal"] = df["macd_line"].ewm(span=9, adjust=False).mean()
+        df["roc_8"] = df["close"].pct_change(8)
+        # Save to csv
+        df.to_csv(f"{option_symbol}_{time_frame}.csv", index=False)
 
 
     def check_for_entry(self, option_symbol):
@@ -169,7 +187,6 @@ class OptionsTracker:
 
         
     def run(self):
-
         # Get strike prices
         strike_price_1 = self.get_open_price("SPY")
         strike_price_2 = strike_price_1 - 1
@@ -179,6 +196,10 @@ class OptionsTracker:
         option_symbol_1_p = self.generate_option_symbol("SPY", strike_price_1, "P")
         option_symbol_2_c = self.generate_option_symbol("SPY", strike_price_2, "C")
         option_symbol_2_p = self.generate_option_symbol("SPY", strike_price_2, "P")
+
+        # Initialize entries structure
+        option_symbols = [option_symbol_1_c, option_symbol_1_p, option_symbol_2_c, option_symbol_2_p]
+        self.initialize_entries(option_symbols)
 
         # Create a csv file for each option symbol
         with open(f"{option_symbol_1_c}_1min.csv", "w") as f:
@@ -190,32 +211,41 @@ class OptionsTracker:
         with open(f"{option_symbol_2_p}_1min.csv", "w") as f:
             f.write("timestamp,open,high,low,close,volume\n")
         
-        # At current minute and 5 seconds query fetch_ohlcv for each option symbol
-        while True:
-            while datetime.now().second != 5:
-                # Do nothing
-                pass
 
-            # Fetch ohlcv
-            self.fetch_ohlcv(option_symbol_1_c)
-            self.fetch_ohlcv(option_symbol_1_p)
-            self.fetch_ohlcv(option_symbol_2_c)
-            self.fetch_ohlcv(option_symbol_2_p)
+        # Fetch ohlcv
+        self.fetch_ohlcv(option_symbol_1_c)
+        self.fetch_ohlcv(option_symbol_1_p)
+        self.fetch_ohlcv(option_symbol_2_c)
+        self.fetch_ohlcv(option_symbol_2_p)
 
-            # Calculate indicators
-            self.calculate_indicators(option_symbol_1_c)
-            self.calculate_indicators(option_symbol_1_p)
-            self.calculate_indicators(option_symbol_2_c)
-            self.calculate_indicators(option_symbol_2_p)
+        # Aggregate minute data to create 5min and 10min timeframes
+        self.aggregate_minute_data(option_symbol_1_c)
+        self.aggregate_minute_data(option_symbol_1_p)
+        self.aggregate_minute_data(option_symbol_2_c)
+        self.aggregate_minute_data(option_symbol_2_p)
 
-            # Check for entry
-            self.check_for_entry(option_symbol_1_c)
-            self.check_for_entry(option_symbol_1_p)
-            self.check_for_entry(option_symbol_2_c)
-            self.check_for_entry(option_symbol_2_p)
+        # Calculate indicators for each timeframe
+        for time_frame in self.time_frames:
+            self.calculate_indicators(option_symbol_1_c, time_frame)
+            self.calculate_indicators(option_symbol_1_p, time_frame)
+            self.calculate_indicators(option_symbol_2_c, time_frame)
+            self.calculate_indicators(option_symbol_2_p, time_frame)
 
-            # Check for exit
-            self.check_for_exit(option_symbol_1_c)
-            self.check_for_exit(option_symbol_1_p)
-            self.check_for_exit(option_symbol_2_c)
-            self.check_for_exit(option_symbol_2_p)
+        # Check for entry
+        self.check_for_entry(option_symbol_1_c)
+        self.check_for_entry(option_symbol_1_p)
+        self.check_for_entry(option_symbol_2_c)
+        self.check_for_entry(option_symbol_2_p)
+
+        # Check for exit
+        self.check_for_exit(option_symbol_1_c)
+        self.check_for_exit(option_symbol_1_p)
+        self.check_for_exit(option_symbol_2_c)
+        self.check_for_exit(option_symbol_2_p)
+
+
+
+
+if __name__ == "__main__":
+    tracker = OptionsTracker()
+    tracker.run()
