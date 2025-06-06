@@ -42,14 +42,16 @@ class OptionsTracker:
     
     def get_open_price(self, symbol):
         """
-        Get the open price for the symbol
+        Get the open price for the symbol, rounded to the nearest whole number
         """
-        # Get the open price for the symbol
-        return self.client.get_daily_open_close_agg(
+        # Get the open price for the symbol and round to nearest whole number
+        open_price = self.client.get_daily_open_close_agg(
             symbol,
             datetime.now().strftime('%Y-%m-%d'),
             adjusted="true",
         )["open"]
+        
+        return round(open_price)
 
     def generate_option_symbol(self, symbol, strike_price, option_type):
         """
@@ -86,25 +88,116 @@ class OptionsTracker:
 
     def fetch_ohlcv(self, option_symbol):
         """
-        Fetch 1 minute ohlcv for the option symbol
+        Fetch 1 minute ohlcv for the option symbol.
+        If file is empty, fetch all available data.
+        If file exists, fetch from last timestamp onwards.
         """
+        csv_filename = f"{option_symbol}_1min.csv"
+        
+        # Check if file exists and is not empty
+        file_exists = os.path.exists(csv_filename)
+        is_empty = True
+        last_timestamp = None
+        
+        if file_exists:
+            try:
+                # Check if file has content beyond header
+                with open(csv_filename, 'r') as f:
+                    lines = f.readlines()
+                    if len(lines) > 1:  # More than just header
+                        is_empty = False
+                        # Get the last timestamp from the file
+                        last_line = lines[-1].strip()
+                        if last_line:
+                            last_timestamp = int(last_line.split(',')[0])
+            except Exception as e:
+                print(f"Error reading existing file {csv_filename}: {e}")
+                is_empty = True
+        
+        # Determine the correct trading date
+        def get_trading_date():
+            now = datetime.now()
+            # Convert to ET timezone (approximate - doesn't handle DST perfectly)
+            import pytz
+            try:
+                et = pytz.timezone('US/Eastern')
+                now_et = now.astimezone(et)
+            except:
+                # Fallback if pytz not available - assume EST (UTC-5)
+                now_et = now - timedelta(hours=5)
+            
+            # Check if it's a weekday (0=Monday, 6=Sunday)
+            if now_et.weekday() < 5:  # Monday-Friday
+                # Check if it's after 9:30 AM ET
+                market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+                if now_et >= market_open:
+                    return now_et.strftime('%Y-%m-%d')
+            
+            # Find the last valid trading day (previous weekday)
+            days_back = 1
+            while True:
+                candidate_date = now_et - timedelta(days=days_back)
+                if candidate_date.weekday() < 5:  # It's a weekday
+                    return candidate_date.strftime('%Y-%m-%d')
+                days_back += 1
+                if days_back > 7:  # Safety check
+                    break
+            
+            # Fallback to yesterday if something goes wrong
+            return (now_et - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        # Determine date range for fetching data
+        if is_empty:
+            # Fetch all data from past week to ensure we get sufficient historical data
+            from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+            to_date = get_trading_date()
+            print(f"📥 Fetching all OHLCV data for {option_symbol} from {from_date} to {to_date}")
+        else:
+            # Fetch data from last timestamp onwards
+            # Convert last timestamp to date (add small buffer to ensure we don't miss data)
+            from_timestamp = datetime.fromtimestamp(last_timestamp / 1000)
+            from_date = from_timestamp.strftime('%Y-%m-%d')
+            to_date = get_trading_date()
+            print(f"📈 Fetching incremental OHLCV data for {option_symbol} from {from_date} to {to_date}")
+        
+        # Fetch data from API
         aggs = []
-        for a in self.client.list_aggs(
-            f"O:{option_symbol}",
-            1,
-            "day",
-            datetime.now().strftime('%Y-%m-%d'),
-            datetime.now().strftime('%Y-%m-%d'),
-            adjusted="true",
-            sort="asc",
-            limit=120,
-        ):
-            aggs.append(a)
+        try:
+            for a in self.client.list_aggs(
+                f"O:{option_symbol}",
+                1,
+                "minute",  # Changed from "day" to "minute" for 1-minute data
+                from_date,
+                to_date,
+                adjusted="true",
+                sort="asc",
+                limit=50000,  # Increased limit to get more historical data
+            ):
+                # Skip data that we already have (if incremental update)
+                if not is_empty and last_timestamp and a['t'] <= last_timestamp:
+                    continue
+                aggs.append(a)
+        except Exception as e:
+            print(f"❌ Error fetching data for {option_symbol}: {e}")
+            return
+        
+        if not aggs:
+            print(f"⚠️  No new data available for {option_symbol}")
+            return
             
         # Save to csv
-        with open(f"{option_symbol}_1min.csv", "a") as f:
-            f.write(f"{aggs[-1]['t']},{aggs[-1]['o']},{aggs[-1]['h']},{aggs[-1]['l']},{aggs[-1]['c']},{aggs[-1]['v']}\n")
-    
+        mode = 'w' if is_empty else 'a'  # Write mode if empty (includes header), append if not
+        with open(csv_filename, mode) as f:
+            # Write header only if file is empty/new
+            if is_empty:
+                f.write("timestamp,open,high,low,close,volume\n")
+            
+            # Write all fetched data
+            for agg in aggs:
+                f.write(f"{agg['t']},{agg['o']},{agg['h']},{agg['l']},{agg['c']},{agg['v']}\n")
+        
+        print(f"✅ Added {len(aggs)} new OHLCV records for {option_symbol}")
+
     def aggregate_minute_data(self, option_symbol):
         # Read csv
         df = pd.read_csv(f"{option_symbol}_1min.csv")
@@ -263,18 +356,7 @@ class OptionsTracker:
         option_symbols = [option_symbol_1_c, option_symbol_1_p, option_symbol_2_c, option_symbol_2_p]
         self.initialize_entries(option_symbols)
 
-        # Create a csv file for each option symbol
-        with open(f"{option_symbol_1_c}_1min.csv", "w") as f:
-            f.write("timestamp,open,high,low,close,volume\n")
-        with open(f"{option_symbol_1_p}_1min.csv", "w") as f:
-            f.write("timestamp,open,high,low,close,volume\n")
-        with open(f"{option_symbol_2_c}_1min.csv", "w") as f:
-            f.write("timestamp,open,high,low,close,volume\n")   
-        with open(f"{option_symbol_2_p}_1min.csv", "w") as f:
-            f.write("timestamp,open,high,low,close,volume\n")
-        
-
-        # Fetch ohlcv
+        # Fetch ohlcv - the method now handles file creation and incremental updates
         self.fetch_ohlcv(option_symbol_1_c)
         self.fetch_ohlcv(option_symbol_1_p)
         self.fetch_ohlcv(option_symbol_2_c)
