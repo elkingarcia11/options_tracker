@@ -1,10 +1,10 @@
 import os
 import pandas as pd
 import time
-from polygon import RESTClient  
-from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from email_notifier import OptionsEmailNotifier
+from polygon import RESTClient  
+from dotenv import load_dotenv
 
 class OptionsTracker:
     def __init__(self):

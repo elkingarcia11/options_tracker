@@ -2,6 +2,14 @@
 
 A real-time options trading strategy tracker that monitors SPY options using technical indicators and executes trades based on predefined signals across multiple timeframes.
 
+## Quick Start
+
+1. **Install dependencies**: `pip install -r requirements.txt`
+2. **Set up API key**: Create `.env` file with `POLYGON_API_KEY=your_key_here`
+3. **Run once**: `python options_tracker.py`
+4. **Optional**: Set up email alerts (see Email Notifications section)
+5. **Automate**: Set up cron job for continuous monitoring
+
 ## Overview
 
 This tracker monitors 4 SPY option contracts:
@@ -91,7 +99,7 @@ pandas
 ### Manual Run
 
 ```bash
-python main.py
+python options_tracker.py
 ```
 
 ### Cron Job Setup (Recommended)
@@ -103,22 +111,24 @@ python main.py
 crontab -e
 
 # Add this line to run Monday-Friday, 9:30 AM - 4:00 PM EST
-* 9-16 * * 1-5 cd /path/to/options_tracker && /usr/bin/python3 main.py
+* 9-16 * * 1-5 cd /path/to/options_tracker && /usr/bin/python3 options_tracker.py
 ```
 
 #### Option 2: Run every 5 minutes during market hours
 
 ```bash
 # Run every 5 minutes during market hours
-*/5 9-16 * * 1-5 cd /path/to/options_tracker && /usr/bin/python3 main.py
+*/5 9-16 * * 1-5 cd /path/to/options_tracker && /usr/bin/python3 options_tracker.py
 ```
 
 #### Option 3: Run at specific times
 
 ```bash
 # Run at market open, mid-day, and close
-30 9,12,16 * * 1-5 cd /path/to/options_tracker && /usr/bin/python3 main.py
+30 9,12,16 * * 1-5 cd /path/to/options_tracker && /usr/bin/python3 options_tracker.py
 ```
+
+**Note**: Email notifications work seamlessly with cron jobs - you'll receive alerts even when running automated.
 
 ## Output Files
 
@@ -235,12 +245,29 @@ tail -f *_1min.csv
 
 3. **Permission errors**
 
-   - Ensure Python script has execute permissions: `chmod +x main.py`
+   - Ensure Python script has execute permissions: `chmod +x options_tracker.py`
    - Check file/directory ownership
 
 4. **Missing dependencies**
+
    - Reinstall requirements: `pip install -r requirements.txt`
    - Check Python path in cron job
+
+5. **Email notifications not working**
+   - Check `email_credentials.env` file exists and has correct permissions
+   - Verify `EMAIL_ALERTS_ENABLED=true` in the file
+   - Test email config: `python -c "from email_notifier import OptionsEmailNotifier; n=OptionsEmailNotifier(); n.test_configuration()"`
+   - For Gmail: Ensure you're using an app-specific password, not your regular password
+   - Check spam/junk folders for test emails
+
+### Security Considerations
+
+- **Email Credentials**: The `email_credentials.env` file contains sensitive information
+  - Add to `.gitignore` to prevent accidental commits
+  - Use app-specific passwords, never your main email password
+  - Restrict file permissions: `chmod 600 email_credentials.env`
+- **API Keys**: Keep your Polygon API key secure in the `.env` file
+- **File Permissions**: Ensure sensitive files aren't readable by others
 
 ## Development
 
@@ -248,7 +275,7 @@ tail -f *_1min.csv
 
 ```bash
 # Test with a single run
-python main.py
+python options_tracker.py
 
 # Check generated files
 ls -la *.csv
