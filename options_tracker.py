@@ -166,8 +166,17 @@ class OptionsTracker:
         for time_frame in self.time_frames:
             # Read csv
             df = pd.read_csv(f"{option_symbol}_{time_frame}.csv")
-            # Check if any of these three are true (ema_7 is less than vwma_17, roc_8 is less than 0, macd_line is less than macd_signal)
-            if (df["ema_7"].iloc[-1] < df["vwma_17"].iloc[-1] or df["roc_8"].iloc[-1] < 0 or df["macd_line"].iloc[-1] < df["macd_signal"].iloc[-1]) and self.entries[option_symbol][time_frame]["open"]:
+            
+            # Check individual exit conditions
+            condition1 = df["ema_7"].iloc[-1] < df["vwma_17"].iloc[-1]  # EMA(7) < VWMA(17)
+            condition2 = df["roc_8"].iloc[-1] < 0                      # ROC(8) < 0
+            condition3 = df["macd_line"].iloc[-1] < df["macd_signal"].iloc[-1]  # MACD Line < MACD Signal
+            
+            # Count how many conditions are true
+            exit_conditions_met = sum([condition1, condition2, condition3])
+            
+            # Exit if at least 2 out of 3 conditions are true AND we have an open position
+            if exit_conditions_met >= 2 and self.entries[option_symbol][time_frame]["open"]:
                 # Record the exit
                 self.entries[option_symbol][time_frame]["open"] = False
                 # Calculate profit/loss

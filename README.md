@@ -22,7 +22,7 @@ It analyzes price action across three timeframes (1min, 5min, 10min) and execute
 - MACD Line > MACD Signal
 - No existing open position for that timeframe
 
-### Exit Conditions (ANY can be true):
+### Exit Conditions (At least 2 out of 3 must be true):
 
 - EMA(7) < VWMA(17)
 - ROC(8) < 0
