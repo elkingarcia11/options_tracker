@@ -1,40 +1,59 @@
-# Options Tracker
+# Options Backtesting Tool
 
-A real-time options trading strategy tracker that monitors SPY options using technical indicators and executes trades based on predefined signals across multiple timeframes.
+A comprehensive options trading strategy backtesting tool that analyzes SPY options using technical indicators across multiple timeframes for historical data analysis.
 
 ## Quick Start
 
 1. **Install dependencies**: `pip install -r requirements.txt`
 2. **Set up API key**: Create `.env` file with `POLYGON_API_KEY=your_key_here`
-3. **Run once**: `python options_tracker.py`
-4. **Optional**: Set up email alerts (see Email Notifications section)
-5. **Automate**: Set up cron job for continuous monitoring
+3. **Run backtesting**: `python options_tracker.py`
+4. **Enter date ranges**: Input start date, end date for analysis
+5. **Review results**: Check the detailed backtesting output and `data/` folder
 
 ## Overview
 
-This tracker monitors 4 SPY option contracts:
+This backtesting tool analyzes 4 SPY option contracts for any historical date range:
 
-- ATM Call (at current SPY price)
-- ATM Put (at current SPY price)
-- OTM Call ($1 below current SPY price)
-- OTM Put ($1 below current SPY price)
+- **ATM Call** (at SPY open price from start date)
+- **ATM Put** (at SPY open price from start date)  
+- **OTM Call** ($1 below SPY open price from start date)
+- **OTM Put** ($1 below SPY open price from start date)
 
-It analyzes price action across three timeframes (1min, 5min, 10min) and executes trades based on technical indicator confluences.
+It processes historical price action across three timeframes (1min, 5min, 10min) and simulates trades based on technical indicator confluences.
+
+## Key Features
+
+### 📊 **Historical Backtesting**
+- **Date range analysis**: Test strategies on any historical period
+- **Precise data**: No rounding of prices or technical indicators
+- **Multiple timeframes**: 1-minute, 5-minute, and 10-minute analysis
+- **Comprehensive results**: Win rate, P&L, and detailed trade breakdown
+
+### 🎯 **Smart Strike Selection**
+- **Automatic calculation**: Strike date = start date + 2 business days
+- **Weekend handling**: 
+  - Saturday → Monday (+ 2 more days)
+  - Sunday → Tuesday (+ 2 more days)
+- **Real market prices**: Uses actual SPY open prices for strike determination
+
+### 📁 **Organized Data Management**
+- All historical data saved to `data/` folder
+- Separate files for each timeframe and option symbol
+- Trade records with entry/exit prices and P&L
+- No data loss between runs
 
 ## Trading Strategy
 
 ### Entry Conditions (ALL must be true):
-
-- EMA(7) > VWMA(17)
-- ROC(8) > 0
-- MACD Line > MACD Signal
-- No existing open position for that timeframe
+- **EMA(7) > VWMA(17)** - Trend momentum
+- **ROC(8) > 0** - Rate of change positive  
+- **MACD Line > MACD Signal** - MACD bullish crossover
+- **No existing position** for that timeframe
 
 ### Exit Conditions (At least 2 out of 3 must be true):
-
-- EMA(7) < VWMA(17)
-- ROC(8) < 0
-- MACD Line < MACD Signal
+- **EMA(7) < VWMA(17)** - Trend momentum reversal
+- **ROC(8) < 0** - Rate of change negative
+- **MACD Line < MACD Signal** - MACD bearish crossover
 
 ## Setup
 
@@ -42,6 +61,14 @@ It analyzes price action across three timeframes (1min, 5min, 10min) and execute
 
 ```bash
 pip install -r requirements.txt
+```
+
+Required packages:
+```
+polygon-api-client
+python-dotenv
+pandas
+pytz
 ```
 
 ### 2. Environment Variables
@@ -52,250 +79,221 @@ Create a `.env` file in the project root:
 POLYGON_API_KEY=your_polygon_api_key_here
 ```
 
-Get your free API key from [Polygon.io](https://polygon.io/)
-
-### 3. Email Notifications (Optional)
-
-To receive email alerts when trades are opened/closed:
-
-1. Copy the template:
-
-   ```bash
-   cp email_credentials.env.template email_credentials.env
-   ```
-
-2. Edit `email_credentials.env` with your email settings:
-
-   ```
-   EMAIL_ALERTS_ENABLED=true
-   SENDER_EMAIL=your_email@gmail.com
-   SENDER_PASSWORD=your_app_password
-   TO_EMAILS=recipient@gmail.com
-   ```
-
-3. For Gmail, generate an app-specific password:
-
-   - Go to [Google App Passwords](https://myaccount.google.com/apppasswords)
-   - Generate a password for "Mail"
-   - Use this password (not your regular Gmail password)
-
-4. Test your email configuration:
-   ```bash
-   python -c "from email_notifier import OptionsEmailNotifier; n=OptionsEmailNotifier(); n.send_test_email()"
-   ```
-
-### 4. Update Requirements
-
-Make sure your `requirements.txt` contains:
-
-```
-polygon-api-client
-python-dotenv
-pandas
-```
+Get your API key from [Polygon.io](https://polygon.io/) (free tier works for historical data)
 
 ## Usage
 
-### Manual Run
+### Running Backtests
 
 ```bash
 python options_tracker.py
 ```
 
-### Cron Job Setup (Recommended)
+**Interactive prompts:**
+1. **Start date** (mm-dd-yyyy): Beginning of analysis period
+2. **End date** (mm-dd-yyyy): End of analysis period
 
-#### Option 1: Run every minute during market hours
+**Automatic calculations:**
+- **Strike prices**: Fetched from SPY open price on start date
+- **Strike date**: Automatically calculated (start date + 2 business days with weekend adjustments)
+- **Option symbols**: Generated using strike prices and strike date
 
-```bash
-# Edit crontab
-crontab -e
+### Example Session
 
-# Add this line to run Monday-Friday, 9:30 AM - 4:00 PM EST
-* 9-16 * * 1-5 cd /path/to/options_tracker && /usr/bin/python3 options_tracker.py
+```
+Enter start date for data fetching (mm-dd-yyyy): 06-05-2024
+Enter end date for data fetching (mm-dd-yyyy): 06-07-2024
+
+🔄 Starting backtesting from 2024-06-05 to 2024-06-07 (strikes from 2024-06-09)
+📊 SPY strike prices: ATM=$524.50, OTM=$523.50
+📈 Option symbols: SPY240609C00524500, SPY240609P00524500, SPY240609C00523500, SPY240609P00523500
+📥 Fetching data from 2024-06-05 to 2024-06-07
+✅ Saved 1247 OHLCV records for SPY240609C00524500
+⚙️ Processing data
+📊 Aggregated 1247 1min → 416 5min → 208 10min candles
+✅ ENTRY: SPY240609C00524500 (5min) at $2.1500
+🔚 EXIT: SPY240609C00524500 (5min) at $2.8700 - PROFIT: $0.7200
+✅ Backtesting completed
+
+==================================================
+📊 BACKTESTING RESULTS
+==================================================
+Total Trades: 3
+Winning Trades: 2
+Losing Trades: 1
+Win Rate: 66.7%
+Total P&L: $1.2400
 ```
 
-#### Option 2: Run every 5 minutes during market hours
+### Date Logic Examples
 
-```bash
-# Run every 5 minutes during market hours
-*/5 9-16 * * 1-5 cd /path/to/options_tracker && /usr/bin/python3 options_tracker.py
-```
-
-#### Option 3: Run at specific times
-
-```bash
-# Run at market open, mid-day, and close
-30 9,12,16 * * 1-5 cd /path/to/options_tracker && /usr/bin/python3 options_tracker.py
-```
-
-**Note**: Email notifications work seamlessly with cron jobs - you'll receive alerts even when running automated.
+| Start Date | Strike Date | Calculation | Adjustment |
+|------------|-------------|-------------|------------|
+| Mon 06-05 | Wed 06-07 | +2 days | None |
+| Thu 06-06 | **Sat 06-08** | +2 days → **Mon 06-10** | +2 more (Saturday) |
+| Fri 06-07 | **Sun 06-09** | +2 days → **Tue 06-11** | +2 more (Sunday) |
 
 ## Output Files
 
-The tracker generates several CSV files and can send email notifications:
-
-### Email Notifications 📧
-
-- **Trade Entry Alerts**: Real-time notifications when positions open
-- **Trade Exit Alerts**: Notifications when positions close with P&L analysis
-- **Parsed Option Details**: Human-readable option information (symbol, strike, expiry)
-- **Technical Signal Summary**: Which conditions triggered entry/exit
+All files are organized in the `data/` folder:
 
 ### Price Data Files
+- `data/{option_symbol}_1min.csv` - 1-minute OHLCV data
+- `data/{option_symbol}_5min.csv` - 5-minute aggregated data  
+- `data/{option_symbol}_10min.csv` - 10-minute aggregated data
 
-- `{option_symbol}_1min.csv` - 1-minute OHLCV data
-- `{option_symbol}_5min.csv` - 5-minute aggregated data
-- `{option_symbol}_10min.csv` - 10-minute aggregated data
-
-### Trade Files
-
-- `{option_symbol}_{timeframe}_entry_exit.csv` - Individual trade records
+### Trade Records
+- `data/{option_symbol}_{timeframe}_entry_exit.csv` - Individual trade records with P&L
 
 ### File Formats
 
 #### OHLCV Files
-
 ```csv
 timestamp,open,high,low,close,volume
+1717603800000,2.15,2.18,2.12,2.17,1250
 ```
 
 #### Trade Files
-
 ```csv
 option_symbol,timeframe,entry_price,exit_price,profit_loss
-```
-
-## Example Option Symbols
-
-The tracker generates option symbols in standard format:
-
-- `SPY241220C00580000` (SPY Call, Dec 20 2024, $580 strike)
-- `SPY241220P00579000` (SPY Put, Dec 20 2024, $579 strike)
-
-## Monitoring and Logs
-
-### Check Cron Job Status
-
-```bash
-# View cron job logs
-grep CRON /var/log/syslog
-
-# Check if your job is scheduled
-crontab -l
-```
-
-### Monitor Output Files
-
-```bash
-# Watch for new trades
-tail -f *_entry_exit.csv
-
-# Check latest price data
-tail -f *_1min.csv
+SPY240609C00524500,5min,2.1500,2.8700,0.7200
 ```
 
 ## Technical Indicators
 
 - **EMA(7)**: 7-period Exponential Moving Average
-- **VWMA(17)**: 17-period Volume Weighted Moving Average (using close price)
+- **VWMA(17)**: 17-period Volume Weighted Moving Average  
 - **EMA(12/26)**: 12 and 26-period EMAs for MACD calculation
 - **MACD**: Moving Average Convergence Divergence
 - **MACD Signal**: 9-period EMA of MACD line
 - **ROC(8)**: 8-period Rate of Change
 
-## Important Notes
+*All calculations preserve full precision with no rounding*
 
-### Market Hours
+## Data Precision
 
-- Options trade Monday-Friday, 9:30 AM - 4:00 PM EST
-- Schedule cron jobs accordingly to avoid unnecessary API calls
+### No Rounding Policy
+- **Strike prices**: Exact SPY open prices (e.g., $524.47, not $524)
+- **Technical indicators**: Full precision calculations
+- **Entry/exit prices**: Exact option prices from market data
+- **P&L calculations**: Precise to 4 decimal places
 
-### API Rate Limits
+### Aggregation Logic
+- **5-minute candles**: Resampled from all available 1-minute data
+- **10-minute candles**: Resampled from all available 1-minute data
+- **Missing periods**: Automatically handled and excluded
+- **Timezone**: All timestamps in milliseconds (UTC)
 
-- Polygon.io has rate limits on free accounts
-- Consider the frequency of your cron jobs to stay within limits
+## Historical Analysis
 
-### Risk Management
+### Supported Date Ranges
+- **Minimum**: Any date with available Polygon data
+- **Maximum**: Any historical date (free tier = previous day)
+- **Granularity**: 1-minute resolution for precise analysis
+- **Market hours**: Standard trading hours data only
 
-- This is a tracking/backtesting tool - not live trading
-- Always validate signals before actual trading
-- Consider transaction costs, slippage, and market impact
+### Strategy Performance Metrics
+- **Total trades**: Count of completed entry/exit cycles
+- **Win rate**: Percentage of profitable trades
+- **Total P&L**: Sum of all trade profits/losses
+- **Individual trades**: Detailed entry/exit analysis per timeframe
 
-### File Management
+## Project Structure
 
-- CSV files will grow over time - consider log rotation
-- Monitor disk space usage
-- Archive old trade data periodically
+```
+options_tracker/
+├── options_tracker.py          # Main backtesting engine
+├── requirements.txt             # Python dependencies
+├── .env                        # API key configuration
+├── README.md                   # This documentation
+└── data/                       # Generated data files
+    ├── SPY240609C00524500_1min.csv
+    ├── SPY240609C00524500_5min.csv
+    ├── SPY240609C00524500_10min.csv
+    └── SPY240609C00524500_1min_entry_exit.csv
+```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **No data in CSV files**
+1. **API Authentication Error**
+   - Check `.env` file exists with correct API key
+   - Verify Polygon.io account is active
+   - Ensure API key has historical data access
 
-   - Check API key in `.env` file
-   - Verify internet connection
-   - Check Polygon.io service status
+2. **No data for date range**
+   - Verify dates are historical (not future)
+   - Check dates fall on trading days
+   - Ensure option symbols existed during that period
 
-2. **Cron job not running**
+3. **Missing timeframe data**
+   - Insufficient 1-minute data for aggregation
+   - Check if market was open during specified period
+   - Verify date format (YYYY-MM-DD)
 
-   - Check cron service: `sudo service cron status`
-   - Verify file paths in crontab
-   - Check cron logs for errors
+4. **File permission errors**
+   - Ensure write access to `data/` directory
+   - Check disk space availability
+   - Verify no files are open in other applications
 
-3. **Permission errors**
+### Data Validation
 
-   - Ensure Python script has execute permissions: `chmod +x options_tracker.py`
-   - Check file/directory ownership
+```bash
+# Check generated files
+ls -la data/
 
-4. **Missing dependencies**
+# View recent trades
+tail data/*_entry_exit.csv
 
-   - Reinstall requirements: `pip install -r requirements.txt`
-   - Check Python path in cron job
-
-5. **Email notifications not working**
-   - Check `email_credentials.env` file exists and has correct permissions
-   - Verify `EMAIL_ALERTS_ENABLED=true` in the file
-   - Test email config: `python -c "from email_notifier import OptionsEmailNotifier; n=OptionsEmailNotifier(); n.test_configuration()"`
-   - For Gmail: Ensure you're using an app-specific password, not your regular password
-   - Check spam/junk folders for test emails
-
-### Security Considerations
-
-- **Email Credentials**: The `email_credentials.env` file contains sensitive information
-  - Add to `.gitignore` to prevent accidental commits
-  - Use app-specific passwords, never your main email password
-  - Restrict file permissions: `chmod 600 email_credentials.env`
-- **API Keys**: Keep your Polygon API key secure in the `.env` file
-- **File Permissions**: Ensure sensitive files aren't readable by others
+# Verify data completeness
+wc -l data/*_1min.csv
+```
 
 ## Development
 
-### Testing
+### Testing Backtests
 
 ```bash
-# Test with a single run
+# Quick test with recent data
 python options_tracker.py
+# Enter: 05-01-2024 to 05-03-2024
 
-# Check generated files
-ls -la *.csv
+# Extended analysis
+python options_tracker.py  
+# Enter: 01-01-2024 to 03-31-2024
 ```
 
-### Customization
+### Customization Options
 
-- Modify strike price offsets in `run()` method
-- Adjust technical indicator periods in `calculate_indicators()`
-- Change timeframes in `__init__()` method
-- Add new entry/exit conditions in respective methods
+- **Strike offsets**: Modify `strike_price_2 = strike_price_1 - 1` in run()
+- **Technical periods**: Adjust EMA/VWMA periods in calculate_indicators()
+- **Entry/exit rules**: Modify conditions in check_for_entry()/check_for_exit()
+- **Timeframes**: Add/remove from self.time_frames in __init__()
+- **Date logic**: Modify calculate_strike_date() for different expiry rules
+
+### Performance Considerations
+
+- **Memory usage**: Large date ranges require more RAM
+- **API limits**: Free tier has request limits
+- **Processing time**: 1-minute data is computation-intensive
+- **Storage**: Each symbol generates ~3 CSV files
+
+## API Limitations
+
+### Polygon.io Free Tier
+- **Historical data**: Previous day and earlier
+- **Rate limits**: 5 requests per minute
+- **Data delay**: End-of-day data only
+- **Upgrade**: Required for real-time or current day data
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+3. Test with various date ranges
+4. Submit a pull request
 
 ## License
 
-This project is for educational and research purposes. Use at your own risk for actual trading.
+This project is for educational and research purposes. Historical backtesting results do not guarantee future performance. Use at your own risk for actual trading decisions.

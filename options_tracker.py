@@ -2,7 +2,6 @@ import os
 import pandas as pd
 import time
 from datetime import datetime, timedelta
-from email_notifier import OptionsEmailNotifier
 from polygon import RESTClient  
 from dotenv import load_dotenv
 
@@ -14,18 +13,18 @@ class OptionsTracker:
         # Load environment variables
         load_dotenv()
 
+        # Create data directory if it doesn't exist
+        os.makedirs("data", exist_ok=True)
+
         # Initialize the client
         self.client = RESTClient(os.getenv("POLYGON_API_KEY"))
-        self.option_symbols = []
-        self.indicators = []
-
-        # Initialize email notifier
-        self.email_notifier = OptionsEmailNotifier()
 
         # For each time frame and each option symbol, trade status starts off False, entry price starts off 0, exit price starts off 0
         self.time_frames = ["1min", "5min", "10min"]
         self.entries = {}
         self.trades = []
+    
+
     
     def initialize_entries(self, option_symbols):
         """
@@ -40,169 +39,76 @@ class OptionsTracker:
                     "exit_price": 0
                 }
     
-    def get_open_price(self, symbol):
+    def get_open_price(self, symbol, date):
         """
-        Get the open price for the symbol, rounded to the nearest whole number
+        Get the open price for the symbol on a specific date (no rounding)
         """
-        # Get the open price for the symbol and round to nearest whole number
-        open_price = self.client.get_daily_open_close_agg(
+        # Get the open price for the symbol (preserve exact value)
+        response = self.client.get_daily_open_close_agg(
             symbol,
-            datetime.now().strftime('%Y-%m-%d'),
+            date,
             adjusted="true",
-        )["open"]
+        )
+        open_price = response.open
         
-        return round(open_price)
+        return open_price
 
-    def generate_option_symbol(self, symbol, strike_price, option_type):
+    def fetch_ohlcv(self, option_symbol, start_date, end_date):
         """
-        Generate an option symbol in standard format.
+        Fetch 1 minute ohlcv for the option symbol between start and end dates.
         """
-        # Get today's date
-        today = datetime.now()
-
-        # Add 2 business days to today's date
-        expiry_date = today + timedelta(days=2)
-
-        # Check if expiry is a weekend and adjust
-        if expiry_date.weekday() == 5:  # Saturday
-            expiry_date += timedelta(days=2)
-        elif expiry_date.weekday() == 6:  # Sunday
-            expiry_date += timedelta(days=1)
-
-        # Format date as YYMMDD
-        date_str = expiry_date.strftime('%y%m%d')
+        csv_filename = f"data/{option_symbol}_1min.csv"
         
-        # Format strike price as 8-digit string with 3 decimal places
-        # (multiply by 1000 to handle cents, then pad to 8 digits)
-        strike_str = f"{int(strike_price * 1000):08d}"
+        # Always fetch fresh data for backtesting
+        print(f"📥 Fetching OHLCV data for {option_symbol} from {start_date} to {end_date}")
         
-        # Validate option type
-        option_type = option_type.upper()
-        if option_type not in ['C', 'P']:
-            raise ValueError("option_type must be 'C' for call or 'P' for put")
-        
-        # Combine all parts: SYMBOL + YYMMDD + C/P + 8-digit strike
-        option_symbol = f"{symbol.upper()}{date_str}{option_type}{strike_str}"
-        
-        return option_symbol
-
-    def fetch_ohlcv(self, option_symbol):
-        """
-        Fetch 1 minute ohlcv for the option symbol.
-        If file is empty, fetch all available data.
-        If file exists, fetch from last timestamp onwards.
-        """
-        csv_filename = f"{option_symbol}_1min.csv"
-        
-        # Check if file exists and is not empty
-        file_exists = os.path.exists(csv_filename)
-        is_empty = True
-        last_timestamp = None
-        
-        if file_exists:
-            try:
-                # Check if file has content beyond header
-                with open(csv_filename, 'r') as f:
-                    lines = f.readlines()
-                    if len(lines) > 1:  # More than just header
-                        is_empty = False
-                        # Get the last timestamp from the file
-                        last_line = lines[-1].strip()
-                        if last_line:
-                            last_timestamp = int(last_line.split(',')[0])
-            except Exception as e:
-                print(f"Error reading existing file {csv_filename}: {e}")
-                is_empty = True
-        
-        # Determine the correct trading date
-        def get_trading_date():
-            now = datetime.now()
-            # Convert to ET timezone (approximate - doesn't handle DST perfectly)
-            import pytz
-            try:
-                et = pytz.timezone('US/Eastern')
-                now_et = now.astimezone(et)
-            except:
-                # Fallback if pytz not available - assume EST (UTC-5)
-                now_et = now - timedelta(hours=5)
-            
-            # Check if it's a weekday (0=Monday, 6=Sunday)
-            if now_et.weekday() < 5:  # Monday-Friday
-                # Check if it's after 9:30 AM ET
-                market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
-                if now_et >= market_open:
-                    return now_et.strftime('%Y-%m-%d')
-            
-            # Find the last valid trading day (previous weekday)
-            days_back = 1
-            while True:
-                candidate_date = now_et - timedelta(days=days_back)
-                if candidate_date.weekday() < 5:  # It's a weekday
-                    return candidate_date.strftime('%Y-%m-%d')
-                days_back += 1
-                if days_back > 7:  # Safety check
-                    break
-            
-            # Fallback to yesterday if something goes wrong
-            return (now_et - timedelta(days=1)).strftime('%Y-%m-%d')
-        
-        # Determine date range for fetching data
-        if is_empty:
-            # Fetch all data from past week to ensure we get sufficient historical data
-            from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-            to_date = get_trading_date()
-            print(f"📥 Fetching all OHLCV data for {option_symbol} from {from_date} to {to_date}")
-        else:
-            # Fetch data from last timestamp onwards
-            # Convert last timestamp to date (add small buffer to ensure we don't miss data)
-            from_timestamp = datetime.fromtimestamp(last_timestamp / 1000)
-            from_date = from_timestamp.strftime('%Y-%m-%d')
-            to_date = get_trading_date()
-            print(f"📈 Fetching incremental OHLCV data for {option_symbol} from {from_date} to {to_date}")
-        
-        # Fetch data from API
+        # Fetch data from API for the date range
         aggs = []
         try:
             for a in self.client.list_aggs(
                 f"O:{option_symbol}",
                 1,
-                "minute",  # Changed from "day" to "minute" for 1-minute data
-                from_date,
-                to_date,
+                "minute",
+                start_date,
+                end_date,
                 adjusted="true",
                 sort="asc",
-                limit=50000,  # Increased limit to get more historical data
+                limit=50000,
             ):
-                # Skip data that we already have (if incremental update)
-                if not is_empty and last_timestamp and a['t'] <= last_timestamp:
-                    continue
                 aggs.append(a)
         except Exception as e:
             print(f"❌ Error fetching data for {option_symbol}: {e}")
             return
         
         if not aggs:
-            print(f"⚠️  No new data available for {option_symbol}")
+            print(f"⚠️  No data available for {option_symbol} from {start_date} to {end_date}")
             return
             
-        # Save to csv
-        mode = 'w' if is_empty else 'a'  # Write mode if empty (includes header), append if not
-        with open(csv_filename, mode) as f:
-            # Write header only if file is empty/new
-            if is_empty:
-                f.write("timestamp,open,high,low,close,volume\n")
+        # Save to csv (overwrite existing data)
+        with open(csv_filename, 'w') as f:
+            # Write header
+            f.write("timestamp,open,high,low,close,volume\n")
             
-            # Write all fetched data
+            # Write all fetched data (no rounding)
             for agg in aggs:
-                f.write(f"{agg['t']},{agg['o']},{agg['h']},{agg['l']},{agg['c']},{agg['v']}\n")
+                f.write(f"{agg.timestamp},{agg.open},{agg.high},{agg.low},{agg.close},{agg.volume}\n")
         
-        print(f"✅ Added {len(aggs)} new OHLCV records for {option_symbol}")
+        print(f"✅ Saved {len(aggs)} OHLCV records for {option_symbol}")
 
     def aggregate_minute_data(self, option_symbol):
         # Read csv
-        df = pd.read_csv(f"{option_symbol}_1min.csv")
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = pd.read_csv(f"data/{option_symbol}_1min.csv")
+        
+        # Convert timestamp from milliseconds to datetime
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
+        
+        # Remove rows with NaN values (in case resampling creates empty periods)
+        df = df.dropna()
+        
+        if len(df) == 0:
+            print(f"⚠️  No valid data to aggregate for {option_symbol}")
+            return
         
         # Aggregate to 5 minutes
         df_5min = df.resample('5min').agg({
@@ -211,26 +117,29 @@ class OptionsTracker:
             'low': 'min',
             'close': 'last',
             'volume': 'sum'
-        })
-        # Aggregate 10 minutes
+        }).dropna()  # Remove empty periods
+        
+        # Aggregate 10 minutes  
         df_10min = df.resample('10min').agg({
             'open': 'first',
             'high': 'max',
             'low': 'min',
             'close': 'last',
             'volume': 'sum'
-        })
+        }).dropna()  # Remove empty periods
         
         # Save to csv
-        df_5min.to_csv(f"{option_symbol}_5min.csv")
-        df_10min.to_csv(f"{option_symbol}_10min.csv")
+        df_5min.to_csv(f"data/{option_symbol}_5min.csv")
+        df_10min.to_csv(f"data/{option_symbol}_10min.csv")
+        
+        print(f"📊 Aggregated {len(df)} 1min → {len(df_5min)} 5min → {len(df_10min)} 10min candles for {option_symbol}")
 
     def calculate_indicators(self, option_symbol, time_frame):
         """
         Calculate ema_7, vwma_17, ema_12, ema_26, macd_line, macd_signal, roc_8 for new entries
         """
         # Read csv
-        df = pd.read_csv(f"{option_symbol}_{time_frame}.csv")
+        df = pd.read_csv(f"data/{option_symbol}_{time_frame}.csv")
     
         # Calculate ema_7, vwma_17,ema_7,vwma_17,ema_12,ema_26,macd_line,macd_signal,roc_8 for new entries
         df["ema_7"] = df["close"].ewm(span=7, adjust=False).mean()
@@ -241,13 +150,13 @@ class OptionsTracker:
         df["macd_signal"] = df["macd_line"].ewm(span=9, adjust=False).mean()
         df["roc_8"] = df["close"].pct_change(8)
         # Save to csv
-        df.to_csv(f"{option_symbol}_{time_frame}.csv", index=False)
+        df.to_csv(f"data/{option_symbol}_{time_frame}.csv", index=False)
 
 
     def check_for_entry(self, option_symbol):
         for time_frame in self.time_frames: 
             # Read csv
-            df = pd.read_csv(f"{option_symbol}_{time_frame}.csv")
+            df = pd.read_csv(f"data/{option_symbol}_{time_frame}.csv")
             # Check if ema_7 is greater than vwma_17 and roc_8 is greater than 0
             if (df["ema_7"].iloc[-1] > df["vwma_17"].iloc[-1] and 
                 df["roc_8"].iloc[-1] > 0 and 
@@ -260,28 +169,13 @@ class OptionsTracker:
                 entry_price = df["close"].iloc[-1]
                 self.entries[option_symbol][time_frame]["entry_price"] = entry_price
                 
-                # Send email notification for entry
-                signal_details = {
-                    'ema_vwma': df["ema_7"].iloc[-1] > df["vwma_17"].iloc[-1],
-                    'roc_positive': df["roc_8"].iloc[-1] > 0,
-                    'macd_bullish': df["macd_line"].iloc[-1] > df["macd_signal"].iloc[-1]
-                }
-                
-                self.email_notifier.send_trade_notification(
-                    option_symbol=option_symbol,
-                    timeframe=time_frame,
-                    action='ENTRY',
-                    price=entry_price,
-                    signal_details=signal_details
-                )
-                
                 print(f"✅ ENTRY: {option_symbol} ({time_frame}) at ${entry_price:.4f}")
             
             
     def check_for_exit(self, option_symbol):
         for time_frame in self.time_frames:
             # Read csv
-            df = pd.read_csv(f"{option_symbol}_{time_frame}.csv")
+            df = pd.read_csv(f"data/{option_symbol}_{time_frame}.csv")
             
             # Check individual exit conditions
             condition1 = df["ema_7"].iloc[-1] < df["vwma_17"].iloc[-1]  # EMA(7) < VWMA(17)
@@ -311,81 +205,171 @@ class OptionsTracker:
                 })
 
                 # Store the entry and exit in a csv file with profit/loss
-                with open(f"{option_symbol}_{time_frame}_entry_exit.csv", "a") as f:
+                with open(f"data/{option_symbol}_{time_frame}_entry_exit.csv", "a") as f:
                     f.write(f"{option_symbol},{time_frame},{entry_price},{exit_price},{profit_loss}\n")
 
-                # Send email notification for exit
-                signal_details = {
-                    'conditions_met': exit_conditions_met,
-                    'ema_vwma_bearish': condition1,
-                    'roc_negative': condition2,
-                    'macd_bearish': condition3
-                }
-                
-                pnl_info = {
-                    'entry_price': entry_price,
-                    'exit_price': exit_price,
-                    'profit_loss': profit_loss
-                }
-                
-                self.email_notifier.send_trade_notification(
-                    option_symbol=option_symbol,
-                    timeframe=time_frame,
-                    action='EXIT',
-                    price=exit_price,
-                    signal_details=signal_details,
-                    pnl_info=pnl_info
-                )
-                
                 pnl_status = "PROFIT" if profit_loss >= 0 else "LOSS"
                 print(f"🔚 EXIT: {option_symbol} ({time_frame}) at ${exit_price:.4f} - {pnl_status}: ${profit_loss:.4f}")
 
         
-    def run(self):
-        # Get strike prices
-        strike_price_1 = self.get_open_price("SPY")
-        strike_price_2 = strike_price_1 - 1
-
-        # Generate option symbols
-        option_symbol_1_c = self.generate_option_symbol("SPY", strike_price_1, "C")
-        option_symbol_1_p = self.generate_option_symbol("SPY", strike_price_1, "P")
-        option_symbol_2_c = self.generate_option_symbol("SPY", strike_price_2, "C")
-        option_symbol_2_p = self.generate_option_symbol("SPY", strike_price_2, "P")
-
-        # Initialize entries structure
-        option_symbols = [option_symbol_1_c, option_symbol_1_p, option_symbol_2_c, option_symbol_2_p]
-        self.initialize_entries(option_symbols)
-
-        # Fetch ohlcv - the method now handles file creation and incremental updates
-        self.fetch_ohlcv(option_symbol_1_c)
-        self.fetch_ohlcv(option_symbol_1_p)
-        self.fetch_ohlcv(option_symbol_2_c)
-        self.fetch_ohlcv(option_symbol_2_p)
-
+    def process_data(self, option_symbols):
+        """
+        Process data (aggregate, calculate indicators, check entry/exit)
+        """
+        print(f"⚙️  Starting data processing at {datetime.now().strftime('%H:%M:%S')}")
+        
         # Aggregate minute data to create 5min and 10min timeframes
-        self.aggregate_minute_data(option_symbol_1_c)
-        self.aggregate_minute_data(option_symbol_1_p)
-        self.aggregate_minute_data(option_symbol_2_c)
-        self.aggregate_minute_data(option_symbol_2_p)
+        for symbol in option_symbols:
+            self.aggregate_minute_data(symbol)
 
         # Calculate indicators for each timeframe
         for time_frame in self.time_frames:
-            self.calculate_indicators(option_symbol_1_c, time_frame)
-            self.calculate_indicators(option_symbol_1_p, time_frame)
-            self.calculate_indicators(option_symbol_2_c, time_frame)
-            self.calculate_indicators(option_symbol_2_p, time_frame)
+            for symbol in option_symbols:
+                self.calculate_indicators(symbol, time_frame)
 
         # Check for entry
-        self.check_for_entry(option_symbol_1_c)
-        self.check_for_entry(option_symbol_1_p)
-        self.check_for_entry(option_symbol_2_c)
-        self.check_for_entry(option_symbol_2_p)
+        for symbol in option_symbols:
+            self.check_for_entry(symbol)
 
         # Check for exit
-        self.check_for_exit(option_symbol_1_c)
-        self.check_for_exit(option_symbol_1_p)
-        self.check_for_exit(option_symbol_2_c)
-        self.check_for_exit(option_symbol_2_p)
+        for symbol in option_symbols:
+            self.check_for_exit(symbol)
+            
+        print(f"✅ Data processing completed at {datetime.now().strftime('%H:%M:%S')}")
+
+    def generate_option_symbol_for_date(self, symbol, strike_price, option_type, base_date):
+        """
+        Generate an option symbol for a specific base date (for backtesting)
+        """
+        # Add 2 business days to base date
+        expiry_date = base_date + timedelta(days=2)
+
+        # Check if expiry is a weekend and adjust
+        if expiry_date.weekday() == 5:  # Saturday
+            expiry_date += timedelta(days=2)
+        elif expiry_date.weekday() == 6:  # Sunday
+            expiry_date += timedelta(days=1)
+
+        # Format date as YYMMDD
+        date_str = expiry_date.strftime('%y%m%d')
+        
+        # Format strike price as 8-digit string with 3 decimal places
+        strike_str = f"{int(strike_price * 1000):08d}"
+        
+        # Validate option type
+        option_type = option_type.upper()
+        if option_type not in ['C', 'P']:
+            raise ValueError("option_type must be 'C' for call or 'P' for put")
+        
+        # Combine all parts
+        option_symbol = f"{symbol.upper()}{date_str}{option_type}{strike_str}"
+        
+        return option_symbol
+
+    def show_results(self):
+        """
+        Display backtesting results
+        """
+        print("\n" + "="*50)
+        print("📊 BACKTESTING RESULTS")
+        print("="*50)
+        
+        if not self.trades:
+            print("No trades were executed.")
+            return
+            
+        total_pnl = sum(trade['profit_loss'] for trade in self.trades)
+        winning_trades = [trade for trade in self.trades if trade['profit_loss'] > 0]
+        losing_trades = [trade for trade in self.trades if trade['profit_loss'] <= 0]
+        
+        print(f"Total Trades: {len(self.trades)}")
+        print(f"Winning Trades: {len(winning_trades)}")
+        print(f"Losing Trades: {len(losing_trades)}")
+        print(f"Win Rate: {(len(winning_trades)/len(self.trades)*100):.1f}%")
+        print(f"Total P&L: ${total_pnl:.4f}")
+        
+        print("\nDetailed Trades:")
+        for trade in self.trades:
+            status = "WIN" if trade['profit_loss'] > 0 else "LOSS"
+            print(f"  {trade['option_symbol']} ({trade['time_frame']}) - "
+                  f"Entry: ${trade['entry_price']:.4f} → Exit: ${trade['exit_price']:.4f} "
+                  f"= ${trade['profit_loss']:.4f} ({status})")
+
+    def calculate_strike_date(self, start_date):
+        """
+        Calculate strike date: start_date + 2 days, with weekend adjustments
+        - If Saturday: add 2 more days (to Monday)
+        - If Sunday: add 2 more days (to Tuesday)
+        """
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        strike_dt = start_dt + timedelta(days=2)
+        
+        # Check if it lands on weekend and adjust
+        if strike_dt.weekday() == 5:  # Saturday
+            strike_dt += timedelta(days=2)  # Move to Monday
+        elif strike_dt.weekday() == 6:  # Sunday
+            strike_dt += timedelta(days=2)  # Move to Tuesday
+            
+        return strike_dt.strftime('%Y-%m-%d')
+
+    def run(self, start_date=None, end_date=None):
+        """
+        Run backtesting for a specific date range
+        """
+        if start_date is None:
+            start_input = input("Enter start date for data fetching (mm-dd-yyyy): ")
+            try:
+                month, day, year = start_input.split('-')
+                start_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+            except ValueError:
+                print("❌ Invalid start date format. Please use mm-dd-yyyy")
+                return
+                
+        if end_date is None:
+            end_input = input("Enter end date for data fetching (mm-dd-yyyy): ")
+            try:
+                month, day, year = end_input.split('-')
+                end_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+            except ValueError:
+                print("❌ Invalid end date format. Please use mm-dd-yyyy")
+                return
+
+        # Calculate strike date automatically (start_date + 2 days with weekend adjustments)
+        strike_date = self.calculate_strike_date(start_date)
+
+        print(f"🔄 Starting backtesting from {start_date} to {end_date} (strikes from {strike_date})")
+        
+        # Get strike prices for the start date (no rounding)
+        strike_price_1 = self.get_open_price("SPY", start_date)
+        strike_price_2 = strike_price_1 - 1
+
+        print(f"📊 SPY strike prices: ATM=${strike_price_1}, OTM=${strike_price_2}")
+
+        # Generate option symbols (using strike date for expiry calculation)
+        strike_dt = datetime.strptime(strike_date, '%Y-%m-%d')
+        option_symbol_1_c = self.generate_option_symbol_for_date("SPY", round(strike_price_1), "C", strike_dt)
+        option_symbol_1_p = self.generate_option_symbol_for_date("SPY", round(strike_price_1), "P", strike_dt)
+        option_symbol_2_c = self.generate_option_symbol_for_date("SPY", round(strike_price_2), "C", strike_dt)
+        option_symbol_2_p = self.generate_option_symbol_for_date("SPY", round(strike_price_2), "P", strike_dt)
+
+        option_symbols = [option_symbol_1_c, option_symbol_1_p, option_symbol_2_c, option_symbol_2_p]
+        print(f"📈 Option symbols: {', '.join(option_symbols)}")
+
+        # Initialize entries structure
+        self.initialize_entries(option_symbols)
+
+        # Fetch data for all symbols using the date range
+        print(f"📥 Fetching data from {start_date} to {end_date}")
+        for symbol in option_symbols:
+            self.fetch_ohlcv(symbol, start_date, end_date)
+            
+        # Process data
+        print(f"⚙️  Processing data")
+        self.process_data(option_symbols)
+        print(f"✅ Backtesting completed")
+        
+        # Show results
+        self.show_results()
 
 
 
